@@ -1,0 +1,6 @@
+{
+  "name": "Сімейний Бюджет",
+  "description": "Спільний трекінг сімейного бюджету, витрат та надходжень у реальному часі для подружжя.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

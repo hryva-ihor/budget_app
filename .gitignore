@@ -1,0 +1,10 @@
+node_modules/
+build/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+dist/assets/firebase-applet-config-DVcpzeSZ.js
+# Exclude sensitive Firebase local credentials from Git tracking
+firebase-applet-config.json

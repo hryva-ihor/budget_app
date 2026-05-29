@@ -1,0 +1,161 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Catch-all safety net (global default deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function getUserDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function getUserFamilyId() {
+      return getUserDoc().data.familyId;
+    }
+
+    // 1. User Profile Rules
+    match /users/{userId} {
+      allow read: if isVerifiedUser() && (request.auth.uid == userId || getUserFamilyId() == resource.data.familyId);
+      allow create: if isVerifiedUser() && request.auth.uid == userId &&
+        request.resource.data.id == userId &&
+        request.resource.data.familyId is string &&
+        request.resource.data.familyId.size() <= 128 &&
+        request.resource.data.email == request.auth.token.email &&
+        request.resource.data.displayName is string &&
+        request.resource.data.displayName.size() <= 100;
+      allow update: if isVerifiedUser() && request.auth.uid == userId &&
+        request.resource.data.id == userId &&
+        request.resource.data.email == request.auth.token.email &&
+        request.resource.data.displayName is string &&
+        request.resource.data.displayName.size() <= 100 &&
+        request.resource.data.familyId is string &&
+        request.resource.data.familyId.size() <= 128 &&
+        request.resource.data.createdAt == resource.data.createdAt;
+      allow delete: if false;
+    }
+
+    // 2. Account Rules
+    function isValidAccount(data) {
+      return data.id is string && isValidId(data.id) &&
+             data.familyId is string && isValidId(data.familyId) &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
+             data.type is string && (data.type == 'cash' || data.type == 'card' || data.type == 'other') &&
+             data.initialBalance is number;
+    }
+
+    match /accounts/{accountId} {
+      allow read, list: if isVerifiedUser() && (resource.data.familyId == request.auth.uid || resource.data.familyId == getUserFamilyId());
+      allow create: if isVerifiedUser() &&
+        isValidAccount(request.resource.data) &&
+        request.resource.data.familyId == getUserFamilyId() &&
+        request.resource.data.createdAt == request.time &&
+        request.resource.data.updatedAt == request.time;
+      allow update: if isVerifiedUser() &&
+        isValidAccount(request.resource.data) &&
+        request.resource.data.familyId == getUserFamilyId() &&
+        request.resource.data.familyId == resource.data.familyId &&
+        request.resource.data.createdAt == resource.data.createdAt &&
+        request.resource.data.updatedAt == request.time;
+      allow delete: if isVerifiedUser() && resource.data.familyId == getUserFamilyId();
+    }
+
+    // 3. Category Rules
+    function isValidCategory(data) {
+      return data.id is string && isValidId(data.id) &&
+             data.familyId is string && isValidId(data.familyId) &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
+             data.icon is string && data.icon.size() <= 50 &&
+             data.color is string && data.color.size() <= 50 &&
+             data.type is string && (data.type == 'expense' || data.type == 'income');
+    }
+
+    match /categories/{categoryId} {
+      allow read, list: if isVerifiedUser() && (resource.data.familyId == request.auth.uid || resource.data.familyId == getUserFamilyId());
+      allow create: if isVerifiedUser() &&
+        isValidCategory(request.resource.data) &&
+        request.resource.data.familyId == getUserFamilyId() &&
+        request.resource.data.createdAt == request.time &&
+        request.resource.data.updatedAt == request.time;
+      allow update: if isVerifiedUser() &&
+        isValidCategory(request.resource.data) &&
+        request.resource.data.familyId == getUserFamilyId() &&
+        request.resource.data.familyId == resource.data.familyId &&
+        request.resource.data.createdAt == resource.data.createdAt &&
+        request.resource.data.updatedAt == request.time;
+      allow delete: if isVerifiedUser() && resource.data.familyId == getUserFamilyId();
+    }
+
+    // 4. Transaction Rules
+    function isValidTransaction(data) {
+      return data.id is string && isValidId(data.id) &&
+             data.familyId is string && isValidId(data.familyId) &&
+             data.accountId is string && isValidId(data.accountId) &&
+             data.categoryId is string && isValidId(data.categoryId) &&
+             data.amount is number && data.amount >= 0 &&
+             data.type is string && (data.type == 'expense' || data.type == 'income') &&
+             data.description is string && data.description.size() <= 500 &&
+             data.createdBy is string && data.createdBy == request.auth.uid;
+    }
+
+    match /transactions/{transactionId} {
+      allow read, list: if isVerifiedUser() && (resource.data.familyId == request.auth.uid || resource.data.familyId == getUserFamilyId());
+      allow create: if isVerifiedUser() &&
+        isValidTransaction(request.resource.data) &&
+        request.resource.data.familyId == getUserFamilyId() &&
+        request.resource.data.createdAt == request.time &&
+        request.resource.data.updatedAt == request.time &&
+        exists(/databases/$(database)/documents/accounts/$(request.resource.data.accountId)) &&
+        exists(/databases/$(database)/documents/categories/$(request.resource.data.categoryId));
+      allow update: if isVerifiedUser() &&
+        isValidTransaction(request.resource.data) &&
+        request.resource.data.familyId == getUserFamilyId() &&
+        request.resource.data.familyId == resource.data.familyId &&
+        request.resource.data.createdAt == resource.data.createdAt &&
+        request.resource.data.updatedAt == request.time &&
+        exists(/databases/$(database)/documents/accounts/$(request.resource.data.accountId)) &&
+        exists(/databases/$(database)/documents/categories/$(request.resource.data.categoryId));
+      allow delete: if isVerifiedUser() && resource.data.familyId == getUserFamilyId();
+    }
+
+    // 5. Goal Rules
+    function isValidGoal(data) {
+      return data.id is string && isValidId(data.id) &&
+             data.familyId is string && isValidId(data.familyId) &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
+             data.targetAmount is number && data.targetAmount > 0 &&
+             data.currentAmount is number && data.currentAmount >= 0 &&
+             data.deadline is string && data.deadline.size() <= 20;
+    }
+
+    match /goals/{goalId} {
+      allow read, list: if isVerifiedUser() && (resource.data.familyId == request.auth.uid || resource.data.familyId == getUserFamilyId());
+      allow create: if isVerifiedUser() &&
+        isValidGoal(request.resource.data) &&
+        request.resource.data.familyId == getUserFamilyId() &&
+        request.resource.data.createdAt == request.time &&
+        request.resource.data.updatedAt == request.time;
+      allow update: if isVerifiedUser() &&
+        isValidGoal(request.resource.data) &&
+        request.resource.data.familyId == getUserFamilyId() &&
+        request.resource.data.familyId == resource.data.familyId &&
+        request.resource.data.createdAt == resource.data.createdAt &&
+        request.resource.data.updatedAt == request.time;
+      allow delete: if isVerifiedUser() && resource.data.familyId == getUserFamilyId();
+    }
+  }
+}
